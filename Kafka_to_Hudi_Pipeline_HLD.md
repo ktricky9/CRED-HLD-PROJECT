@@ -188,4 +188,4 @@ Transformation config:
 
 ### 11. Pipeline Layout (visual)
 
-*(No update made to diagram — let me know if you want it revised to reflect changes.)*
+![text](./images/kafka_to_hudi.png)
