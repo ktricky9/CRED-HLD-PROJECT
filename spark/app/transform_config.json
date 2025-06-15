@@ -1,0 +1,11 @@
+{
+  "source_schema": "public",
+  "source_table": "orders",
+  "target_schema": "public",
+  "target_table": "orders_transformed",
+  "criticality": "high",
+  "input_bucket": "s3a://hudi-data",
+  "output_bucket": "s3a://hudi-data",
+  "transformation_column": "status",
+  "transformation_type": "json_flatten"
+}

@@ -10,25 +10,54 @@ from init_minio import create_buckets
 
 # --- Mock CDC Data Generator ---
 def generate_order_event(order_id):
+    # Status code options
+    order_statuses = ["created", "processing", "shipped", "delivered", "cancelled"]
+    
+    # Reasons/messages for each status
+    status_messages = {
+        "created": ["Order placed successfully", "New order received", "Order initiated"],
+        "processing": ["Payment confirmed", "Items being packed", "Processing in warehouse"],
+        "shipped": ["Package en route", "Shipped via express", "Carrier picked up"],
+        "delivered": ["Package delivered", "Received by customer", "Delivery confirmed"],
+        "cancelled": ["Customer requested cancellation", "Payment failed", "Items unavailable"]
+    }
+    
+    # Pick a status
+    status_code = random.choice(order_statuses)
+    
+    # Create nested JSON for status
+    status_json = {
+        "code": status_code,
+        "message": random.choice(status_messages[status_code]),
+        "updated_at": datetime.now().isoformat(),
+        "severity": random.choice(["low", "medium", "high"])
+    }
+    
+    # Convert to string (this is what would typically happen when storing JSON in a string column)
+    status_str = json.dumps(status_json)
+    
     event = {
         "order_id": str(order_id),
         "customer_id": str(random.randint(1, 100)),
         "amount": random.randint(100, 10000),
-        "status": random.choice(["created", "updated", "cancelled"]),
+        "status": status_str,  # This is now a JSON string
         "created_at": datetime.now().isoformat(),
-        "__lsn": random.randint(10000, 99999)
+        "__lsn": random.randint(10000, 20000)
     }
     return event
 
 def produce_mock_cdc_events(topic, bootstrap_servers, num_events=100):
+    """Produce mock CDC events to Kafka with nested JSON in status field"""
     producer = KafkaProducer(
-        bootstrap_servers=bootstrap_servers,
-        value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        bootstrap_servers=[bootstrap_servers],
+        value_serializer=lambda x: json.dumps(x).encode('utf-8')
     )
+    
     for i in range(num_events):
         event = generate_order_event(i)
-        producer.send(topic, event)
-        time.sleep(0.1)
+        producer.send(topic, value=event)
+        time.sleep(0.01)  # Small delay to avoid overloading
+    
     producer.flush()
     producer.close()
 
