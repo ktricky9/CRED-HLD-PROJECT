@@ -19,12 +19,12 @@ for arg in "$@"; do
   esac
 done
 
-# Handle rebuild if needed
+# Handle rebuild if needed (if you have a custom Dockerfile in the spark directory)
 if [ "$REBUILD" = "yes" ]; then
-  echo "Rebuilding Spark image with debugging tools..."
-  cd ../spark && docker build -t cred-spark:latest .
+  echo "Rebuilding Spark image with custom configuration..."
+  cd ../spark && podman build -t bitnami/spark:latest .
   cd ../demo
-  echo "Rebuild complete"
+  echo "Rebuild complete - custom Spark image is now active"
 fi
 
 # Display event count info
