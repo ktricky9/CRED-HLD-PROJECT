@@ -1,71 +1,32 @@
 import json
 import os
 import time
-import random
-from datetime import datetime
-from kafka import KafkaProducer
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
 from init_minio import create_buckets
 
-# --- Mock CDC Data Generator ---
-def generate_order_event(order_id):
-    # Status code options
-    order_statuses = ["created", "processing", "shipped", "delivered", "cancelled"]
-    
-    # Reasons/messages for each status
-    status_messages = {
-        "created": ["Order placed successfully", "New order received", "Order initiated"],
-        "processing": ["Payment confirmed", "Items being packed", "Processing in warehouse"],
-        "shipped": ["Package en route", "Shipped via express", "Carrier picked up"],
-        "delivered": ["Package delivered", "Received by customer", "Delivery confirmed"],
-        "cancelled": ["Customer requested cancellation", "Payment failed", "Items unavailable"]
-    }
-    
-    # Pick a status
-    status_code = random.choice(order_statuses)
-    
-    # Create nested JSON for status
-    status_json = {
-        "code": status_code,
-        "message": random.choice(status_messages[status_code]),
-        "updated_at": datetime.now().isoformat(),
-        "severity": random.choice(["low", "medium", "high"])
-    }
-    
-    # Convert to string (this is what would typically happen when storing JSON in a string column)
-    status_str = json.dumps(status_json)
-    
-    event = {
-        "order_id": str(order_id),
-        "customer_id": str(random.randint(1, 100)),
-        "amount": random.randint(100, 10000),
-        "status": status_str,  # This is now a JSON string
-        "created_at": datetime.now().isoformat(),
-        "__lsn": random.randint(10000, 20000)
-    }
-    return event
-
-def produce_mock_cdc_events(topic, bootstrap_servers, num_events=100):
-    """Produce mock CDC events to Kafka with nested JSON in status field"""
-    producer = KafkaProducer(
-        bootstrap_servers=[bootstrap_servers],
-        value_serializer=lambda x: json.dumps(x).encode('utf-8')
-    )
-    
-    for i in range(num_events):
-        event = generate_order_event(i)
-        producer.send(topic, value=event)
-        time.sleep(0.01)  # Small delay to avoid overloading
-    
-    producer.flush()
-    producer.close()
-
 # --- Spark Hudi Job ---
 def run_spark_hudi_job(config_path):
+    """Run a Spark job to process CDC events from Kafka to a Hudi table"""
     with open(config_path) as f:
         config = json.load(f)
+    
+    # Get Kafka topic from environment variable or use default
+    kafka_topic = os.environ.get("KAFKA_TOPIC", "orders_cdc")
+    print(f"Reading from Kafka topic: {kafka_topic}")
+    # Ensure Spark UI is properly enabled and configured for network access
+    # For Bitnami Spark, configure UI to be accessible from outside the container
+    # The key change: use SPARK_LOCAL_IP for bindAddress (critical for Bitnami's Spark image)
+    container_ip = os.environ.get("SPARK_LOCAL_IP", "0.0.0.0")
+    
+    # Create the unique Spark config for Bitnami container
+    print("\n=== CONFIGURING SPARK UI FOR BITNAMI SPARK CONTAINER ===")
+    print(f"Container IP/Bind Address: {container_ip}")
+    print(f"Enabling UI on port 4040")
+    
+    # Simplified configuration specifically for Bitnami Spark
     spark = SparkSession.builder \
+        .master("local[*]") \
         .appName("KafkaToHudiPipeline") \
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
         .config("spark.sql.hive.convertMetastoreParquet", "false") \
@@ -75,14 +36,58 @@ def run_spark_hudi_job(config_path):
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .config("spark.jars.packages", "org.apache.hudi:hudi-spark3.4-bundle_2.12:0.14.1,org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1") \
+        .config("spark.driver.bindAddress", container_ip) \
+        .config("spark.driver.host", container_ip) \
+        .config("spark.ui.enabled", "true") \
+        .config("spark.ui.port", "4040") \
         .getOrCreate()
     
-    # Read from Kafka
+    # Add visible UI message
+    print("\n========================================================")
+    print("Spark is running with UI enabled")
+    print("Access the Spark UI at: http://localhost:4040")
+    print("========================================================\n")
+    
+    # Create a small dataframe and execute an action to ensure UI is populated
+    print("\nRunning a small test job to populate the UI...")
+    test_df = spark.createDataFrame([(1, "test"), (2, "sample")], ["id", "value"])
+    test_df.show()
+    
+    # Force some activity to appear in the UI
+    count = test_df.count()
+    print(f"Test data count: {count}")
+    
+    # Print SparkContext information
+    sc = spark.sparkContext
+    print(f"\nSpark running with applicationId: {sc.applicationId}")
+    
+    # Safe way to get UI URL without using Scala Option methods
+    try:
+        ui_web_url = sc._jsc.sc().uiWebUrl()
+        if ui_web_url is not None and ui_web_url.isDefined():
+            print(f"Spark Web UI is at: {ui_web_url.get()}")
+        else:
+            print("Spark Web UI should be at: http://localhost:4040")
+    except Exception as e:
+        print("Spark Web UI should be at: http://localhost:4040")
+        
+    print("\n" + "*" * 60)
+    
+    # Log information about Spark UI
+    print("\n=====================================================\n")
+    print(f"Spark UI is available at: http://localhost:4040")
+    print("\n=====================================================\n")
+    
+    # Read from Kafka using topic from environment variable
+    kafka_topic = os.environ.get("KAFKA_TOPIC", "orders_cdc")
     df = spark.read.format("kafka") \
         .option("kafka.bootstrap.servers", os.environ.get("KAFKA_BOOTSTRAP_SERVERS")) \
-        .option("subscribe", config["kafka_topic"]) \
+        .option("subscribe", kafka_topic) \
         .option("startingOffsets", "earliest") \
         .load()
+    
+    print(f"Successfully connected to Kafka topic: {kafka_topic}")
+    
     
     # Parse JSON payload
     schema = StructType([
@@ -117,18 +122,60 @@ def run_spark_hudi_job(config_path):
         .option("hoodie.datasource.write.hive_style_partitioning", "true") \
         .mode("overwrite") \
         .save(output_path)
-    spark.stop()
+    
+    # Note: We're NOT stopping the Spark session here
+    # This allows the UI to remain available during the sleep period
+    # spark.stop() is moved to the end of the script
+
+def parse_args():
+    """Parse command line arguments"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run CDC data ingestion to Hudi job")
+    parser.add_argument("--config", default="/app/config.json", 
+                        help="Path to configuration JSON")
+    parser.add_argument("--ui-wait", type=int, default=60,
+                        help="Time to keep Spark UI available after job completion (seconds)")
+    
+    return parser.parse_args()
 
 if __name__ == "__main__":
+    # Parse command line arguments
+    args = parse_args()
+    
+    # Calculate UI wait time with priority: ENV VAR > Command Line Arg > Default
+    ui_wait_time = int(os.environ.get("SPARK_UI_WAIT_SECONDS", str(args.ui_wait)))
+    
     # Ensure MinIO bucket exists before starting
     print("Ensuring MinIO bucket exists...")
     create_buckets()
     
-    # Produce mock CDC events
-    default_config_path = "/app/config.json"
-    topic = "orders_cdc"
-    kafka_bootstrap = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
-    produce_mock_cdc_events(topic, kafka_bootstrap, num_events=100)
+    # Print UI information
+    print("\n=====================================================\n")
+    print(f"Spark UI is available at: http://localhost:4040")
+    print(f"UI will remain accessible for {ui_wait_time} seconds after job completion")
+    print("\n=====================================================\n")
     
-    # Run Spark Hudi job
-    run_spark_hudi_job(default_config_path)
+    # Run Spark Hudi job to consume data from Kafka and write to Hudi
+    print("Starting Spark job to process data from Kafka to Hudi...")
+    run_spark_hudi_job(args.config)
+    
+    # Keep the application running for a while to allow UI inspection
+    print(f"\n✅ Job completed! Keeping Spark UI available for {ui_wait_time} seconds...")
+    print(f"Access Spark UI at: http://localhost:4040")
+    try:
+        time.sleep(ui_wait_time)
+    except KeyboardInterrupt:
+        print("\nProcess interrupted. Exiting...")
+        pass
+    
+    print("Done.")
+    
+    # Now stop the Spark session after the sleep period
+    if 'spark' in locals() or 'spark' in globals():
+        print("Shutting down Spark session...")
+        spark.stop()
+    
+    print("\n✅ Data loaded successfully!")
+    print("You can verify this by:")
+    print("  1. Looking at MinIO UI (http://localhost:9001) for the hudi-data/orders directory")

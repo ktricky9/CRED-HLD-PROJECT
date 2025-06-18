@@ -48,6 +48,8 @@ services:
 
   spark:
     build: ./spark
+    ports:
+      - "4040:4040"  # Expose Spark UI
     environment:
       - PYTHONUNBUFFERED=1
       - MINIO_ENDPOINT=http://minio:9000

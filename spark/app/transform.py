@@ -4,6 +4,7 @@ Transformation job to read from Hudi tables and apply transformations
 """
 import os
 import json
+import time
 import argparse
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
@@ -11,7 +12,17 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 def create_spark_session():
     """Create SparkSession with Hudi configurations"""
-    return SparkSession.builder \
+    # For Bitnami Spark, configure UI to be accessible from outside the container
+    container_ip = os.environ.get("SPARK_LOCAL_IP", "0.0.0.0")
+    
+    # Create the unique Spark config for Bitnami container
+    print("\n=== CONFIGURING SPARK UI FOR BITNAMI SPARK CONTAINER ===")
+    print(f"Container IP/Bind Address: {container_ip}")
+    print(f"Enabling UI on port 4040")
+    
+    # Simplified configuration specifically for Bitnami Spark
+    spark = SparkSession.builder \
+        .master("local[*]") \
         .appName("HudiTransformationJob") \
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
         .config("spark.sql.hive.convertMetastoreParquet", "false") \
@@ -21,7 +32,44 @@ def create_spark_session():
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .config("spark.jars.packages", "org.apache.hudi:hudi-spark3.4-bundle_2.12:0.14.1") \
+        .config("spark.driver.bindAddress", container_ip) \
+        .config("spark.driver.host", container_ip) \
+        .config("spark.ui.enabled", "true") \
+        .config("spark.ui.port", "4040") \
         .getOrCreate()
+    
+    # Add visible UI message
+    print("\n========================================================")
+    print("Spark is running with UI enabled")
+    print("Access the Spark UI at: http://localhost:4040")
+    print("========================================================\n")
+    
+    # Create a small dataframe and execute an action to ensure UI is populated
+    print("\nRunning a small test job to populate the UI...")
+    test_df = spark.createDataFrame([(1, "test"), (2, "sample")], ["id", "value"])
+    test_df.show()
+    
+    # Force some activity to appear in the UI
+    count = test_df.count()
+    print(f"Test data count: {count}")
+    
+    # Print SparkContext information
+    sc = spark.sparkContext
+    print(f"\nSpark running with applicationId: {sc.applicationId}")
+    
+    # Safe way to get UI URL without using Scala Option methods
+    try:
+        ui_web_url = sc._jsc.sc().uiWebUrl()
+        if ui_web_url is not None and ui_web_url.isDefined():
+            print(f"Spark Web UI is at: {ui_web_url.get()}")
+        else:
+            print("Spark Web UI should be at: http://localhost:4040")
+    except Exception as e:
+        print("Spark Web UI should be at: http://localhost:4040")
+        
+    print("\n" + "*" * 60)
+    
+    return spark
 
 def load_config(config_path):
     """Load transformation configuration from JSON file"""
@@ -89,15 +137,27 @@ def apply_transformations(df, config):
     return df
 
 def write_transformed_data(df, config):
-    """Write transformed data to a new Hudi table"""
+    """Write transformed data to a new Hudi table using the same partition field
+    as the source data (partition_date)"""
     output_path = f"{config['output_bucket']}/{config['target_table']}"
     print(f"Writing transformed data to: {output_path}")
     
-    # Write to Hudi
+    # Ensure partition_date is present and properly formatted
+    print("\nVerifying partition column: partition_date")
+    
+    # Check if partition_date exists in the dataframe
+    columns = df.columns
+    if "partition_date" not in columns:
+        raise ValueError("partition_date column is missing from the source data")
+    
+    print(f"Using 'partition_date' as partition field for transformed data")
+    
+    # Write to Hudi with the same partition field as source data
     df.write.format("hudi") \
         .option("hoodie.table.name", config["target_table"]) \
         .option("hoodie.datasource.write.recordkey.field", "order_id") \
         .option("hoodie.datasource.write.precombine.field", "__lsn") \
+        .option("hoodie.datasource.write.partitionpath.field", "partition_date") \
         .option("hoodie.datasource.write.table.type", "MERGE_ON_READ") \
         .option("hoodie.datasource.hive_sync.enable", "false") \
         .option("hoodie.datasource.write.hive_style_partitioning", "true") \
@@ -133,13 +193,48 @@ def run_transformation(config_path):
         result_df = spark.read.format("hudi").load(output_path)
         print("Result row count:", result_df.count())
         
+        # Keep the UI available for inspection (sleep timer within the function)
+        ui_wait_time = int(os.environ.get("SPARK_UI_WAIT_SECONDS", "60"))
+        print(f"\n✅ Transformation job completed! Keeping Spark UI available for {ui_wait_time} seconds...")
+        print(f"Access the Spark UI at: http://localhost:4040")
+        try:
+            time.sleep(ui_wait_time)
+        except KeyboardInterrupt:
+            print("\nProcess interrupted. Exiting...")
+            pass
+        
+        print("UI wait period completed.")
+        
     finally:
-        spark.stop()
+        # Return the spark session - don't stop it here
+        # This allows the main program to potentially use it further
+        pass
+    
+    # Return the spark session for potential further use
+    return spark
 
 if __name__ == "__main__":
+    # Parse command line arguments
     parser = argparse.ArgumentParser(description="Run Hudi transformation job")
     parser.add_argument("--config", default="/app/transform_config.json", 
                         help="Path to transformation config JSON")
+    parser.add_argument("--ui-wait", type=int, default=60,
+                        help="Time to keep Spark UI available after job completion (seconds)")
     args = parser.parse_args()
     
-    run_transformation(args.config)
+    # Print UI information
+    print("\n=====================================================\n")
+    print(f"Spark UI is available at: http://localhost:4040")
+    print("\n=====================================================\n")
+    
+    # Run the transformation job - the UI wait time is handled inside the function
+    spark = run_transformation(args.config)
+    
+    # Properly stop the spark session after it's no longer needed
+    if spark:
+        print("Shutting down Spark session...")
+        spark.stop()
+    
+    print("\n✅ Transformation complete!")
+    print("You can verify this in MinIO UI (http://localhost:9001)")
+    print("Look for the hudi-data/orders_transformed directory")
