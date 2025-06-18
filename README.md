@@ -17,8 +17,11 @@ This project sets up a local data ingestion pipeline using Kafka (CDC events), A
 - Proper partition handling for timestamps in Hudi
 - Configurable Kafka topic and bootstrap servers
 - Multiple listener configuration for both container and host access
-- Interactive demo script for showcasing pipeline components
+- Modular and sequential demo scripts for pipeline components
 - CDC event simulation with configurable event count
+- Spark UI accessible for real-time job monitoring and debugging
+- JSON field flattening transformations with schema preservation
+- Schema evolution with new field support
 
 ## How to Run
 
@@ -29,29 +32,43 @@ podman-compose up --build
 docker-compose up --build
 ```
 
-### Option 2: Interactive Demo
+### Option 2: Step-by-Step Demo (Recommended)
+
+Either run the all-in-one demo script:
+```sh
+./demo/run-demo.sh
+```
+
+Or execute each step individually:
 
 1. **Start Infrastructure**
    ```sh
-   podman-compose up -d zookeeper kafka minio kafka-ui
+   ./demo/1-start-infra.sh
    ```
 
-2. **Run Demo Script with Options**
+2. **Generate Mock CDC Data**
    ```sh
-   # Setup environment variables
-   export KAFKA_BOOTSTRAP_SERVERS=localhost:39092
-   export MINIO_ENDPOINT=http://localhost:9001
-   export MINIO_ACCESS_KEY=minioadmin
-   export MINIO_SECRET_KEY=minioadmin
-   export HUDI_BUCKET=s3a://hudi-data/
-   
-   # Run demo script
-   python demo.py --setup      # Create MinIO buckets
-   python demo.py --events 25  # Generate 25 CDC events
-   python demo.py --process    # Process events with Spark/Hudi
-   
-   # Or run everything
-   python demo.py --all
+   ./demo/2-generate-data.sh
+   ```
+
+3. **Load Data from Kafka to Hudi**
+   ```sh
+   ./demo/3-load-data.sh
+   ```
+
+4. **Transform Data (JSON Flattening)**
+   ```sh
+   ./demo/4-transform-data.sh
+   ```
+
+5. **Compare Source and Transformed Tables**
+   ```sh
+   ./demo/5-compare-tables.sh
+   ```
+
+6. **Demonstrate Schema Evolution**
+   ```sh
+   ./demo/6-schema-evolution.sh
    ```
 
 ## Web UIs
@@ -59,18 +76,28 @@ docker-compose up --build
 - **Kafka UI**: [http://localhost:8081](http://localhost:8081)
 - **MinIO UI**: [http://localhost:9001](http://localhost:9001)
   - Login: `minioadmin` / `minioadmin`
+- **Spark UI**: [http://localhost:4040](http://localhost:4040)
+  - Available during and after job execution (configurable wait time)
 
 ## Configuration
 
-- **Main Configuration**: `spark/app/config.json`
-  - Configure table name, Kafka topic, etc.
+- **Main Configuration**: 
+  - Data ingestion: `spark/app/config.json`
+  - Data transformation: `spark/app/transform_config.json`
 - **Kafka Configuration**: 
   - Internal access: `kafka:29092` (for containers)
   - External access: `localhost:39092` (from host)
+  - Default topic: `orders_cdc`
 - **MinIO Data**: 
   - Bucket: `hudi-data`
-  - Path: `s3a://hudi-data/orders/`
-  - Partitioned by date from timestamp
+  - Paths: 
+    - Source data: `s3a://hudi-data/orders/`
+    - Transformed data: `s3a://hudi-data/orders_transformed/`
+  - Partitioned by `partition_date` column
+- **Spark UI Configuration**:
+  - Network binding: `SPARK_LOCAL_IP=0.0.0.0` (for Bitnami Spark container)
+  - UI wait time: `SPARK_UI_WAIT_SECONDS=600` (configurable)
+  - Default port: `4040` (mapped to host)
 
 ## Troubleshooting
 
@@ -86,10 +113,27 @@ podman-compose restart spark
 
 ## Development
 
-- Modify `spark/app/main.py` for custom transformations
-- Edit `spark/app/config.json` for table/topic configuration
-- `demo.py` provides modular pipeline execution for presentations
+- **Data Generation**: Modify `spark/app/generate_kafka_data.py` for custom CDC events
+- **Data Ingestion**: Customize `spark/app/main.py` for Kafka to Hudi pipeline
+- **Data Transformation**: Adjust `spark/app/transform.py` for new transformations
+- **Configuration**:
+  - `spark/app/config.json` for ingestion settings
+  - `spark/app/transform_config.json` for transformation settings
+
+## Project Structure
+
+- **demo/**: Contains all modular demo scripts for each step of the pipeline
+  - `1-start-infra.sh`: Starts Kafka, MinIO, and other services
+  - `2-generate-data.sh`: Generates mock CDC events in Kafka
+  - `3-load-data.sh`: Processes data from Kafka to Hudi
+  - `4-transform-data.sh`: Applies transformations (JSON flattening)
+  - `5-compare-tables.sh`: Compares source and transformed data
+  - `6-schema-evolution.sh`: Demonstrates schema evolution capability
+- **spark/app/**: Core application code
+  - `main.py`: Kafka to Hudi ingestion logic
+  - `transform.py`: Data transformation logic
+  - `generate_kafka_data.py`: Mock CDC data generation
 
 ---
 
-This project demonstrates a scalable Kafka-to-Hudi ingestion pattern that supports upserts, schema evolution, and efficient time-based partitioning.
+This project demonstrates a scalable Kafka-to-Hudi ingestion pattern that supports upserts, schema evolution, and efficient time-based partitioning. The modular design allows for flexible execution of individual pipeline components with real-time monitoring via the Spark UI.
