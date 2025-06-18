@@ -32,3 +32,4 @@ podman-compose run \
 
 echo "✅ Data loaded successfully!"
 echo "You can verify this by looking at MinIO UI (http://localhost:9001) for the hudi-data/orders directory"
+echo "The data schema, count, and sample records are displayed above."

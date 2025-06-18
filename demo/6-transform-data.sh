@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Step 4: Transform Orders Data"
+echo "Step 6: Transform Orders Data"
 echo "========================================================="
 
 # Create a specific container for the transform job
@@ -28,3 +28,4 @@ fi
 echo "✅ Transformation complete!"
 echo "You can verify this in MinIO UI (http://localhost:9001)"
 echo "Look for the hudi-data/orders_transformed directory"
+echo "Notice the flattened status fields (status_code, status_message, etc.) in the sample data above"

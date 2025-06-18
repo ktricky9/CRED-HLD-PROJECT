@@ -45,11 +45,18 @@ def create_buckets():
     else:
         print(f"Bucket '{bucket_name}' already exists")
 
-def generate_order_event(order_id=None):
-    """Generate a mock CDC event for an order"""
-    if not order_id:
-        order_id = random.randint(1, 1000)
-        
+def generate_order_event(index, start_id=1, start_lsn=10000):
+    """Generate a mock CDC event for an order with sequential IDs
+    
+    Args:
+        index: The index of the event (0-based) used to generate sequential IDs
+        start_id: The starting order_id value
+        start_lsn: The starting LSN value
+    """
+    # Generate sequential order_id based on index and start_id
+    order_id = start_id + index
+    
+    # Customer ID can remain random
     customer_id = random.randint(1, 50)
     amount = random.randint(1000, 10000)
     
@@ -71,8 +78,8 @@ def generate_order_event(order_id=None):
     # Transaction timestamp
     created_at = datetime.now() - timedelta(hours=random.randint(0, 3))
     
-    # LSN (Log Sequence Number) for CDC ordering
-    lsn = random.randint(10000, 30000)
+    # Sequential LSN based on index and start_lsn
+    lsn = start_lsn + index
     
     return {
         "order_id": str(order_id),
@@ -83,26 +90,72 @@ def generate_order_event(order_id=None):
         "__lsn": lsn
     }
 
-def produce_mock_cdc_events(topic, bootstrap_servers, num_events=100):
-    """Produce mock CDC events to a Kafka topic"""
-    print(f"Producing {num_events} mock CDC events to topic: {topic}")
+def generate_mock_cdc_events(num_events=100, output_file=None, start_id=1, start_lsn=10000):
+    """Generate mock CDC events and save to a file
     
+    Args:
+        num_events: Number of events to generate
+        output_file: Path to output file (optional)
+        start_id: Starting order_id value
+        start_lsn: Starting LSN value
+    """
+    events = []
+    data_file = output_file or os.path.join(os.path.dirname(__file__), "mock_cdc_events.jsonl")
+    print(f"Generating {num_events} mock CDC events and saving to {data_file}")
+    print(f"Using sequential IDs starting from order_id={start_id}, LSN={start_lsn}")
+    
+    # Generate events with sequential IDs
+    for i in range(num_events):
+        event = generate_order_event(i, start_id, start_lsn)
+        events.append(event)
+        
+        # Log some of the events for visibility
+        if i % 20 == 0 or i < 2 or i >= num_events - 2:
+            print(f"Generated event {i+1}/{num_events}: order_id={event['order_id']}, LSN={event['__lsn']}")
+    
+    
+    # Write events to file (overwriting previous content)
+    with open(data_file, 'w') as f:
+        for event in events:
+            f.write(json.dumps(event) + '\n')
+    
+    print(f"Successfully generated and saved {num_events} events to {data_file}")
+    return data_file, events
+
+def produce_mock_cdc_events(topic, bootstrap_servers, num_events=100, input_file=None, start_id=1, start_lsn=10000):
+    """Read CDC events from a file and produce them to Kafka topic
+    If the input file is not provided or doesn't exist, new events will be generated"""
+    if not input_file:
+        data_file, events = generate_mock_cdc_events(num_events, start_id=start_id, start_lsn=start_lsn)
+    else:
+        data_file = input_file
+        events = []
+        with open(data_file, 'r') as f:
+            for line in f:
+                events.append(json.loads(line.strip()))
+        num_events = len(events)
+    
+    print(f"Producing {num_events} events from {data_file} to Kafka topic: {topic}")
+    
+    # Connect to Kafka and send events
     producer = KafkaProducer(
         bootstrap_servers=bootstrap_servers,
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
     
-    for i in range(num_events):
-        event = generate_order_event()
+    # Send each event to Kafka
+    for i, event in enumerate(events):
         producer.send(topic, event)
         
         # Log some of the events for visibility
         if i % 20 == 0:
-            print(f"Produced event {i+1}/{num_events}: {event}")
+            print(f"Sending event {i+1}/{num_events} to Kafka: {event}")
     
     producer.flush()
     producer.close()
-    print(f"Successfully produced {num_events} events to {topic}")
+    print(f"Successfully produced {num_events} events to Kafka topic: {topic}")
+    print(f"Event data is persisted in: {data_file}")
+    return data_file
 
 def parse_args():
     """Parse command line arguments"""
@@ -113,8 +166,16 @@ def parse_args():
                         help="Kafka bootstrap servers")
     parser.add_argument("--events", type=int, default=100,
                         help="Number of events to generate")
+    parser.add_argument("--start-id", type=int, default=1,
+                        help="Starting order_id value for sequential generation")
+    parser.add_argument("--start-lsn", type=int, default=10000,
+                        help="Starting LSN value for sequential generation")
     parser.add_argument("--create-buckets", action="store_true",
                         help="Create MinIO buckets if they don't exist")
+    parser.add_argument("--file", default=None, 
+                        help="Path to save/load events data (default: app/mock_cdc_events.jsonl)")
+    parser.add_argument("--generate-only", action="store_true",
+                        help="Only generate events to file without sending to Kafka")
     
     return parser.parse_args()
     
@@ -141,21 +202,43 @@ if __name__ == "__main__":
             print("Ensuring MinIO bucket exists...")
             create_buckets()
         
-        # Get bootstrap servers from env var or argument
-        kafka_bootstrap = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", args.bootstrap)
-        print(f"Using Kafka bootstrap servers: {kafka_bootstrap}")
-        print(f"Target Kafka topic: {args.topic}")
-        
-        # Generate and publish events
-        produce_mock_cdc_events(args.topic, kafka_bootstrap, num_events=args.events)
-        
-        print("\n✅ Data generation complete!")
-        print(f"Generated {args.events} events in Kafka topic: {args.topic}")
-        print("You can verify by checking Kafka UI (http://localhost:8081)")
+        if args.generate_only:
+            # Only generate events to file, don't send to Kafka
+            data_file, _ = generate_mock_cdc_events(
+                num_events=args.events, 
+                output_file=args.file,
+                start_id=args.start_id,
+                start_lsn=args.start_lsn
+            )
+            print("\n✅ Data generation complete!")
+            print(f"Generated {args.events} events and saved to {data_file}")
+            print(f"Used sequential IDs: order_ids {args.start_id}-{args.start_id + args.events - 1}")
+            print(f"Used sequential LSNs: {args.start_lsn}-{args.start_lsn + args.events - 1}")
+            print("Run this script again without --generate-only to send these events to Kafka")
+        else:
+            # Generate events and send to Kafka
+            kafka_bootstrap = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", args.bootstrap)
+            print(f"Using Kafka bootstrap servers: {kafka_bootstrap}")
+            print(f"Target Kafka topic: {args.topic}")
+            
+            # Generate or read events, then publish to Kafka
+            data_file = produce_mock_cdc_events(
+                args.topic, 
+                kafka_bootstrap, 
+                num_events=args.events, 
+                input_file=args.file,
+                start_id=args.start_id,
+                start_lsn=args.start_lsn
+            )
+            
+            print("\n✅ Data generation and publishing complete!")
+            print(f"Generated and published {args.events} events to Kafka topic: {args.topic}")
+            print(f"Event data is persisted in file: {data_file}")
+            print("You can verify by checking Kafka UI (http://localhost:8081)")
         
     except Exception as e:
         print(f"\nERROR: {type(e).__name__}: {str(e)}")
-        print("Make sure Kafka is running and accessible")
+        print("Make sure Kafka is running and accessible (if sending to Kafka)")
         print("Try installing required packages: pip install kafka-python boto3")
         import traceback
         traceback.print_exc()

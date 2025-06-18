@@ -77,14 +77,21 @@ def load_config(config_path):
         return json.load(f)
 
 def read_hudi_table(spark, config):
-    """Read data from Hudi table"""
+    """Read data from Hudi table with schema inference"""
     input_path = f"{config['input_bucket']}/{config['source_table']}"
     print(f"Reading from Hudi table: {input_path}")
     
-    # Use Hudi format to read the table
+    # Use Hudi format to read the table with schema inference
+    # Schema inference is automatic when reading Hudi tables
     df = spark.read.format("hudi").load(input_path)
-    print(f"Schema of source table:")
+    
+    print(f"Inferred schema of source table:")
     df.printSchema()
+    
+    # Print a sample row to show the actual data structure
+    print("\nSample data from source table:")
+    df.show(1, truncate=False)
+    
     return df
 
 def apply_transformations(df, config):
@@ -95,31 +102,46 @@ def apply_transformations(df, config):
     print(f"Applying transformation '{transform_type}' to column '{transform_column}'")
     
     if transform_type == "json_flatten":
-        # The status column now contains JSON strings like:
-        # {"code":"created","message":"Order placed successfully","updated_at":"2025-06-15T11:42:06.123456","severity":"low"}
+        # Check the schema to determine if the field is already a struct or a JSON string
+        field_type = [field.dataType for field in df.schema.fields if field.name == transform_column][0]
+        print(f"\nDetected field type for '{transform_column}': {field_type}")
         
-        # Define the schema for the nested JSON
-        json_schema = StructType([
-            StructField("code", StringType()),
-            StructField("message", StringType()),
-            StructField("updated_at", StringType()),
-            StructField("severity", StringType())
-        ])
-        
-        # Extract fields from the JSON string
-        df = df.withColumn(f"{transform_column}_parsed", F.from_json(
-            F.col(transform_column), 
-            json_schema
-        ))
-        
+        is_already_parsed = False
+        # Check if it's already a struct (parsed) or a string (needs parsing)
+        if str(field_type).startswith('StructType'):
+            print(f"Field '{transform_column}' is already parsed as a struct, accessing directly")
+            is_already_parsed = True
+        else:
+            print(f"Field '{transform_column}' is a string, parsing as JSON")
+            # Define the schema for the nested JSON
+            json_schema = StructType([
+                StructField("code", StringType()),
+                StructField("message", StringType()),
+                StructField("updated_at", StringType()),
+                StructField("severity", StringType())
+            ])
+            
+            # Parse the JSON string into a struct
+            df = df.withColumn(f"{transform_column}_parsed", F.from_json(
+                F.col(transform_column), 
+                json_schema
+            ))
+            
         # Flatten the nested structure - extract each field as a separate column
-        df = df.withColumn(f"{transform_column}_code", F.col(f"{transform_column}_parsed.code"))
-        df = df.withColumn(f"{transform_column}_message", F.col(f"{transform_column}_parsed.message"))
-        df = df.withColumn(f"{transform_column}_updated_at", F.col(f"{transform_column}_parsed.updated_at"))
-        df = df.withColumn(f"{transform_column}_severity", F.col(f"{transform_column}_parsed.severity"))
-        
-        # Drop the intermediate parsing column but keep the original JSON string
-        df = df.drop(f"{transform_column}_parsed")
+        if is_already_parsed:
+            # Direct access for already parsed structs
+            df = df.withColumn(f"{transform_column}_code", F.col(f"{transform_column}.code"))
+            df = df.withColumn(f"{transform_column}_message", F.col(f"{transform_column}.message"))
+            df = df.withColumn(f"{transform_column}_updated_at", F.col(f"{transform_column}.updated_at"))
+            df = df.withColumn(f"{transform_column}_severity", F.col(f"{transform_column}.severity"))
+        else:
+            # Access through the parsed intermediate field
+            df = df.withColumn(f"{transform_column}_code", F.col(f"{transform_column}_parsed.code"))
+            df = df.withColumn(f"{transform_column}_message", F.col(f"{transform_column}_parsed.message"))
+            df = df.withColumn(f"{transform_column}_updated_at", F.col(f"{transform_column}_parsed.updated_at"))
+            df = df.withColumn(f"{transform_column}_severity", F.col(f"{transform_column}_parsed.severity"))
+            # Drop the intermediate parsing column
+            df = df.drop(f"{transform_column}_parsed")
         
         # Print sample data to show the transformation
         print("\nSample row after transformation:")
@@ -189,9 +211,22 @@ def run_transformation(config_path):
         output_path = write_transformed_data(transformed_df, config)
         
         # Verify results
-        print("Transformation complete. Verifying results...")
+        print("\n📊 Data Summary for Transformed Table")
+        print("=======================================================\n")
+        print(f"Reading transformed table from {output_path}")
         result_df = spark.read.format("hudi").load(output_path)
-        print("Result row count:", result_df.count())
+        
+        # Show schema
+        print("\n=== SCHEMA ===\n")
+        result_df.printSchema()
+        
+        # Show count
+        count = result_df.count()
+        print(f"\n=== ROW COUNT: {count} ===\n")
+        
+        # Show sample data (10 rows)
+        print("\n=== SAMPLE DATA (10 ROWS) ===\n")
+        result_df.show(10, truncate=False)
         
         # Keep the UI available for inspection (sleep timer within the function)
         ui_wait_time = int(os.environ.get("SPARK_UI_WAIT_SECONDS", "60"))

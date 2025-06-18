@@ -7,7 +7,9 @@ from init_minio import create_buckets
 
 # --- Spark Hudi Job ---
 def run_spark_hudi_job(config_path):
-    """Run a Spark job to process CDC events from Kafka to a Hudi table"""
+    """Run a Spark job to process CDC events from Kafka to a Hudi table
+    Returns the SparkSession for further operations
+    """
     with open(config_path) as f:
         config = json.load(f)
     
@@ -89,23 +91,41 @@ def run_spark_hudi_job(config_path):
     print(f"Successfully connected to Kafka topic: {kafka_topic}")
     
     
-    # Parse JSON payload
-    schema = StructType([
-        StructField("order_id", StringType()),
-        StructField("customer_id", StringType()),
-        StructField("amount", IntegerType()),
-        StructField("status", StringType()),
-        StructField("created_at", StringType()),
-        StructField("__lsn", IntegerType())
-    ])
+    # Parse JSON using schema inference
+    from pyspark.sql.functions import col, to_date, date_format, from_json, expr, schema_of_json
+    
+    # First, get a sample of the JSON data to infer schema
+    print("Inferring schema from JSON data...")
+    sample_json_df = df.select(col("value").cast("string").alias("json_str")).limit(10)
+    
+    # Check if we have data
+    if sample_json_df.count() > 0:
+        # Infer schema from the first record
+        first_json = sample_json_df.first()[0]
+        print(f"Sample JSON for schema inference: {first_json[:200]}..." if len(first_json) > 200 else first_json)
+        inferred_schema = spark.read.json(spark.sparkContext.parallelize([first_json])).schema
+        print("Inferred schema:")
+        for field in inferred_schema.fields:
+            print(f"  - {field.name}: {field.dataType} (nullable={field.nullable})")
+    else:
+        print("No data found in Kafka topic for schema inference!")
+        inferred_schema = None
     
     # Add a function to convert ISO timestamp to date format for partitioning
-    from pyspark.sql.functions import col, to_date, date_format
     def add_partition_field(df):
-        return df.withColumn("partition_date", date_format(to_date(col("created_at")), "yyyy-MM-dd"))
+        if "created_at" in [f.name for f in df.schema.fields]:
+            return df.withColumn("partition_date", date_format(to_date(col("created_at")), "yyyy-MM-dd"))
+        else:
+            print("WARNING: created_at field not found in schema, using current date for partition")
+            from pyspark.sql.functions import current_date
+            return df.withColumn("partition_date", date_format(current_date(), "yyyy-MM-dd"))
     
-    from pyspark.sql.functions import col, from_json
-    orders_df = df.select(from_json(col("value").cast("string"), schema).alias("data")).select("data.*")
+    # Parse the JSON data with dynamic schema inference
+    if inferred_schema:
+        orders_df = df.select(from_json(col("value").cast("string"), inferred_schema).alias("data")).select("data.*")
+    else:
+        # Fallback to direct schema inference if we couldn't get a sample
+        orders_df = spark.read.json(df.select(col("value").cast("string")).rdd.map(lambda x: x[0]))
     
     # Add partition field with file-safe format
     orders_df = add_partition_field(orders_df)
@@ -126,6 +146,9 @@ def run_spark_hudi_job(config_path):
     # Note: We're NOT stopping the Spark session here
     # This allows the UI to remain available during the sleep period
     # spark.stop() is moved to the end of the script
+    
+    # Return the Spark session for further operations
+    return spark
 
 def parse_args():
     """Parse command line arguments"""
@@ -158,7 +181,35 @@ if __name__ == "__main__":
     
     # Run Spark Hudi job to consume data from Kafka and write to Hudi
     print("Starting Spark job to process data from Kafka to Hudi...")
-    run_spark_hudi_job(args.config)
+    spark = run_spark_hudi_job(args.config)
+    
+    # Display data summary (schema, count, sample data)
+    print("\n📊 Data Summary for Initial Orders Table")
+    print("=======================================================\n")
+    
+    try:
+        # Get the Hudi table path from config
+        with open(args.config) as f:
+            config = json.load(f)
+        output_path = os.environ.get("HUDI_BUCKET") + config["table_name"]
+        
+        # Read the table we just wrote
+        print(f"Reading table from {output_path}")
+        result_df = spark.read.format("hudi").load(output_path)
+        
+        # Show schema
+        print("\n=== SCHEMA ===\n")
+        result_df.printSchema()
+        
+        # Show count
+        count = result_df.count()
+        print(f"\n=== ROW COUNT: {count} ===\n")
+        
+        # Show sample data (10 rows)
+        print("\n=== SAMPLE DATA (10 ROWS) ===\n")
+        result_df.show(10, truncate=False)
+    except Exception as e:
+        print(f"Error displaying data summary: {str(e)}")
     
     # Keep the application running for a while to allow UI inspection
     print(f"\n✅ Job completed! Keeping Spark UI available for {ui_wait_time} seconds...")

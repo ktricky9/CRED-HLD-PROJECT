@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Step 5: Compare Source and Transformed Tables"
+echo "Step 7: Compare Source and Transformed Tables"
 echo "========================================================="
 
 # Run a Spark shell script to show table comparisons

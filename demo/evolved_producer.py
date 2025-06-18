@@ -49,15 +49,15 @@ def produce_evolved_events(bootstrap_servers, topic, num_events=20):
             "severity": random.choice(["low", "medium", "high"])
         }
         
-        # Convert to string (this is what would typically happen when storing JSON in a string column)
-        status_str = json.dumps(status_json)
+        # Keep status as a nested JSON object (struct in Spark)
+        # DO NOT convert to string - this breaks schema compatibility
         
         # Basic fields (same as original)
         data = {
             "order_id": str(order_id),
             "customer_id": str(random.randint(1, 100)),
             "amount": random.randint(100, 10000),
-            "status": status_str,
+            "status": status_json,  # Keep as nested JSON object
             "created_at": datetime.now().isoformat(),
             "__lsn": random.randint(20000, 30000),  # Higher LSN than original
             
