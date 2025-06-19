@@ -97,6 +97,44 @@ Or execute each step individually:
 - **Spark UI**: [http://localhost:4040](http://localhost:4040)
   - Available during and after job execution (configurable wait time)
 
+## Interactive Spark Shell
+
+The project includes a handy script `demo/spark-shell.sh` that launches an interactive Spark shell with all necessary MinIO/Hudi configurations pre-loaded.
+
+### Usage Examples:
+
+```scala
+// Start the shell
+./demo/spark-shell.sh
+
+// Inside the Spark shell (Scala):
+
+// 1. Read the original Hudi table
+val ordersDF = spark.read.format("hudi").load("s3a://hudi-data/orders")
+
+// 2. Show table schema
+ordersDF.printSchema()
+
+// 3. Display sample data
+ordersDF.show(5)
+
+// 4. Count records
+ordersDF.count()
+
+// 5. Run SQL queries
+spark.sql("SELECT order_id, customer_id, amount, status.code FROM orders WHERE amount > 5000").show()
+
+// 6. Check for evolved schema fields
+val columns = ordersDF.columns
+columns.foreach(println)
+
+// 7. Read transformed table
+val transformedDF = spark.read.format("hudi").load("s3a://hudi-data/orders_transformed")
+transformedDF.show(5)
+```
+
+These examples let you interactively explore the data and schema at any point during or after running the pipeline.
+
 ## Configuration
 
 - **Main Configuration**: 
