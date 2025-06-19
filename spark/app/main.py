@@ -140,6 +140,7 @@ def run_spark_hudi_job(config_path):
         .option("hoodie.datasource.write.table.type", "MERGE_ON_READ") \
         .option("hoodie.datasource.hive_sync.enable", "false") \
         .option("hoodie.datasource.write.hive_style_partitioning", "true") \
+        .option("hoodie.datasource.write.schema.allow.auto.evolution", "true") \
         .mode("overwrite") \
         .save(output_path)
     

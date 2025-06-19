@@ -113,13 +113,14 @@ def apply_transformations(df, config):
             is_already_parsed = True
         else:
             print(f"Field '{transform_column}' is a string, parsing as JSON")
-            # Define the schema for the nested JSON
-            json_schema = StructType([
-                StructField("code", StringType()),
-                StructField("message", StringType()),
-                StructField("updated_at", StringType()),
-                StructField("severity", StringType())
-            ])
+            # Use schema inference instead of hardcoding the schema
+            # This ensures we capture all fields even when schema evolves
+            # Sample the JSON to infer its structure dynamically without hardcoded fallback
+            sample = df.select(transform_column).limit(1).collect()[0][0]
+            # Infer schema from the sample
+            sample_df = spark.read.json(spark.sparkContext.parallelize([sample]))
+            json_schema = sample_df.schema
+            print(f"Inferred schema from JSON sample: {json_schema}")
             
             # Parse the JSON string into a struct
             df = df.withColumn(f"{transform_column}_parsed", F.from_json(
@@ -211,9 +212,9 @@ def run_transformation(config_path):
         output_path = write_transformed_data(transformed_df, config)
         
         # Verify results
-        print("\n📊 Data Summary for Transformed Table")
+        print("\n📊 Data Summary for TRANSFORMED TABLE (orders_transformed)")
         print("=======================================================\n")
-        print(f"Reading transformed table from {output_path}")
+        print(f"Reading transformed table from {output_path} (orders_transformed)")
         result_df = spark.read.format("hudi").load(output_path)
         
         # Show schema
@@ -273,3 +274,4 @@ if __name__ == "__main__":
     print("\n✅ Transformation complete!")
     print("You can verify this in MinIO UI (http://localhost:9001)")
     print("Look for the hudi-data/orders_transformed directory")
+    print("NOTE: The data shown above is from the TRANSFORMED table (orders_transformed), not the original orders table.")
