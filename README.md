@@ -18,10 +18,13 @@ This project sets up a local data ingestion pipeline using Kafka (CDC events), A
 - Configurable Kafka topic and bootstrap servers
 - Multiple listener configuration for both container and host access
 - Modular and sequential demo scripts for pipeline components
-- CDC event simulation with configurable event count
+- CDC event simulation with configurable row count and sequential IDs
+- Upsert event generation and processing with merge-on-read tables
 - Spark UI accessible for real-time job monitoring and debugging
+- Data summary integration (schema, count, samples) in pipeline
 - JSON field flattening transformations with schema preservation
 - Schema evolution with new field support
+- Breaking schema changes demo for educational purposes
 
 ## How to Run
 
@@ -46,9 +49,9 @@ Or execute each step individually:
    ./demo/1-start-infra.sh
    ```
 
-2. **Generate Mock CDC Data**
+2. **Generate Mock CDC Data** (supports configurable row count)
    ```sh
-   ./demo/2-generate-data.sh
+   ./demo/2-generate-data.sh --count=100
    ```
 
 3. **Load Data from Kafka to Hudi**
@@ -56,19 +59,34 @@ Or execute each step individually:
    ./demo/3-load-data.sh
    ```
 
-4. **Transform Data (JSON Flattening)**
+4. **Generate Upsert Events** (updates to existing records)
    ```sh
-   ./demo/4-transform-data.sh
+   ./demo/4-generate-upserts.sh
    ```
 
-5. **Compare Source and Transformed Tables**
+5. **Process Upserts with Hudi**
    ```sh
-   ./demo/5-compare-tables.sh
+   ./demo/5-process-upserts.sh
    ```
 
-6. **Demonstrate Schema Evolution**
+6. **Transform Data** (JSON flattening)
    ```sh
-   ./demo/6-schema-evolution.sh
+   ./demo/6-transform-data.sh
+   ```
+
+7. **Compare Source and Transformed Tables**
+   ```sh
+   ./demo/7-compare-tables.sh
+   ```
+
+8. **Demonstrate Schema Evolution** (adding new fields)
+   ```sh
+   ./demo/8-schema-evolution.sh
+   ```
+
+9. **Breaking Schema Changes Demo** (educational)
+   ```sh
+   ./demo/9-breaking-schema.sh
    ```
 
 ## Web UIs

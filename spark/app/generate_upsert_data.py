@@ -51,8 +51,8 @@ def generate_upserts(events, count):
         # Increment LSN to ensure this is treated as a newer version
         upsert["__lsn"] = event["__lsn"] + random.randint(10000, 20000)
         
-        # Update timestamp
-        upsert["created_at"] = (datetime.now()).isoformat()
+        # DO NOT update created_at timestamp - it should remain the same as the original record
+        # Only update the status field and its updated_at timestamp
         
         # Modify status field
         if isinstance(upsert["status"], dict):

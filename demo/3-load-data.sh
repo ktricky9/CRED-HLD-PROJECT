@@ -11,7 +11,7 @@ if [ "$REBUILD" = "rebuild" ]; then
 fi
 
 # Remind user to generate data first if needed
-echo "Note: Make sure to run ./1-generate-data.sh first to generate Kafka data"
+echo "Note: Make sure to run ./2-generate-data.sh first to generate Kafka data"
 echo ""
 
 # Define the kafka topic name - must match the one used in step 2
