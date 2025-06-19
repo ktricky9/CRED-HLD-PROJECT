@@ -26,6 +26,13 @@ This project sets up a local data ingestion pipeline using Kafka (CDC events), A
 - Schema evolution with new field support (payment_method, shipping_provider, items_count)
 - Interactive Spark shell for ad-hoc queries against Hudi tables
 
+## Prerequisites
+
+- **Podman** or **Docker**: This project requires either Podman (recommended) or Docker to run the containerized services
+- **Podman Compose** or **Docker Compose**: For orchestrating the multi-container setup
+- **Bash shell**: For running the demo scripts
+- Minimum 4GB RAM recommended for running all services
+
 ## How to Run
 
 ### Option 1: Run Everything at Once

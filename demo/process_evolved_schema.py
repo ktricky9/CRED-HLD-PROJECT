@@ -117,35 +117,48 @@ def generate_evolved_schema_mock_data(num_events=20, output_file="/app/data/mock
         print(f"Error saving mock data: {e}")
         return False
 
-# Function to push data to Kafka
-def push_to_kafka(df, topic="orders_cdc", bootstrap_servers=None):
-    """Push DataFrame records to Kafka topic"""
+# Function to push data to Kafka using kafka-python (more lightweight than Spark)
+def push_to_kafka(data_path, topic="orders_cdc", bootstrap_servers=None):
+    """Push JSON records from file to Kafka topic using kafka-python"""
     if bootstrap_servers is None:
         bootstrap_servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
     
     print(f"\n===== PUSHING DATA TO KAFKA =====")
     print(f"Target Kafka topic: {topic}")
     print(f"Bootstrap servers: {bootstrap_servers}")
-    print(f"Total records to push: {df.count()}")
     
-    # Convert DataFrame to JSON strings
-    from pyspark.sql.functions import to_json, struct
+    # Import kafka-python
+    from kafka import KafkaProducer
+    import json
     
-    # Convert entire row to JSON
-    kafka_df = df.select(to_json(struct("*")).alias("value"))
-    
-    # Show sample of what we're pushing
-    print("\nSample record being pushed to Kafka:")
-    kafka_df.select("value").show(1, False)
-    
-    # Write to Kafka
+    # Create Kafka producer
     try:
-        kafka_df.write \
-            .format("kafka") \
-            .option("kafka.bootstrap.servers", bootstrap_servers) \
-            .option("topic", topic) \
-            .save()
-        print(f"✅ Successfully pushed {df.count()} records to Kafka topic: {topic}")
+        producer = KafkaProducer(
+            bootstrap_servers=bootstrap_servers,
+            value_serializer=lambda x: json.dumps(x).encode('utf-8')
+        )
+        
+        # Read data from file and count records
+        records = []
+        with open(data_path, 'r') as f:
+            for line in f:
+                records.append(json.loads(line))
+        
+        print(f"Total records to push: {len(records)}")
+        
+        # Show sample of what we're pushing
+        if records:
+            print("\nSample record being pushed to Kafka:")
+            print(json.dumps(records[0], indent=2))
+        
+        # Send each record to Kafka
+        for record in records:
+            producer.send(topic, value=record)
+            
+        # Ensure all messages are sent
+        producer.flush()
+        
+        print(f"✅ Successfully pushed {len(records)} records to Kafka topic: {topic}")
         return True
     except Exception as e:
         print(f"❌ Error pushing to Kafka: {e}")
@@ -159,24 +172,9 @@ if args.generate_mock:
     output_file = "/Users/kartikrai/CRED-HLD-PROJECT/data/mock_evolved_schema.jsonl"
     generate_evolved_schema_mock_data(args.events, output_file)
     if args.push_to_kafka:
-        spark = SparkSession.builder \
-            .appName("HudiSchemaEvolution") \
-            .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
-            .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-            .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-            .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
-            .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-            .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-            .config("spark.jars.packages", "org.apache.hudi:hudi-spark3.4-bundle_2.12:0.14.1,org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1") \
-            .config("spark.driver.bindAddress", "0.0.0.0") \
-            .config("spark.driver.host", "0.0.0.0") \
-            .config("spark.ui.enabled", "true") \
-            .config("spark.ui.port", "4040") \
-            .master("local[*]") \
-            .getOrCreate()
+        # Use lightweight Kafka producer instead of Spark
         mock_file_path = args.mock_file
-        orders_df = spark.read.json(mock_file_path)
-        push_to_kafka(orders_df, args.kafka_topic)
+        push_to_kafka(mock_file_path, args.kafka_topic)
     print("Mock data generation complete. Exiting without running Spark job.")
     import sys
     sys.exit(0)
@@ -241,7 +239,7 @@ if args.use_mock_file:
         
         # If requested, push to Kafka
         if args.push_to_kafka:
-            push_to_kafka(orders_df, args.kafka_topic)
+            push_to_kafka(mock_file_path, args.kafka_topic)
             
             # After pushing to Kafka, read back from Kafka to demonstrate the full pipeline
             print("\n===== SIMULATING FULL PIPELINE: READING BACK FROM KAFKA =====")
