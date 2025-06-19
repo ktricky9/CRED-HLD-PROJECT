@@ -108,9 +108,13 @@ The project includes a handy script `demo/spark-shell.sh` that launches an inter
 ./demo/spark-shell.sh
 
 // Inside the Spark shell (Scala):
+// Note: For SQL queries, you must register DataFrames as temp views first!
 
 // 1. Read the original Hudi table
 val ordersDF = spark.read.format("hudi").load("s3a://hudi-data/orders")
+
+// 1b. Register as temp view for SQL queries
+ordersDF.createOrReplaceTempView("orders")
 
 // 2. Show table schema
 ordersDF.printSchema()
@@ -130,7 +134,13 @@ columns.foreach(println)
 
 // 7. Read transformed table
 val transformedDF = spark.read.format("hudi").load("s3a://hudi-data/orders_transformed")
+
+// Register transformed table for SQL queries too
+transformedDF.createOrReplaceTempView("orders_transformed")
 transformedDF.show(5)
+
+// 8. Query the transformed table with SQL
+spark.sql("SELECT * FROM orders_transformed WHERE status_code = 'delivered'").show()
 ```
 
 These examples let you interactively explore the data and schema at any point during or after running the pipeline.
