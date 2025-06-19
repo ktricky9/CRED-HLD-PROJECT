@@ -33,6 +33,21 @@ This project sets up a local data ingestion pipeline using Kafka (CDC events), A
 - **Bash shell**: For running the demo scripts
 - Minimum 4GB RAM recommended for running all services
 
+### Using Docker Instead of Podman
+
+This project uses `podman` and `podman-compose` commands in the scripts. If you have Docker installed but not Podman, you can create aliases to use Docker instead:
+
+```bash
+# Add these lines to your ~/.bashrc or ~/.zshrc
+alias podman='docker'
+alias podman-compose='docker compose'
+
+# Then reload your shell configuration
+source ~/.bashrc  # or source ~/.zshrc if using zsh
+```
+
+With these aliases, all the scripts will run Docker commands instead of Podman, without needing any modifications.
+
 ## How to Run
 
 ### Option 1: Run Everything at Once
