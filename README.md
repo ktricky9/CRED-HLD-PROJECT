@@ -23,8 +23,8 @@ This project sets up a local data ingestion pipeline using Kafka (CDC events), A
 - Spark UI accessible for real-time job monitoring and debugging
 - Data summary integration (schema, count, samples) in pipeline
 - JSON field flattening transformations with schema preservation
-- Schema evolution with new field support
-- Breaking schema changes demo for educational purposes
+- Schema evolution with new field support (payment_method, shipping_provider, items_count)
+- Interactive Spark shell for ad-hoc queries against Hudi tables
 
 ## How to Run
 
@@ -84,9 +84,9 @@ Or execute each step individually:
    ./demo/8-schema-evolution.sh
    ```
 
-9. **Breaking Schema Changes Demo** (educational)
+9. **Interactive Spark Shell** (for ad-hoc queries)
    ```sh
-   ./demo/9-breaking-schema.sh
+   ./demo/spark-shell.sh
    ```
 
 ## Web UIs
@@ -144,13 +144,26 @@ podman-compose restart spark
   - `1-start-infra.sh`: Starts Kafka, MinIO, and other services
   - `2-generate-data.sh`: Generates mock CDC events in Kafka
   - `3-load-data.sh`: Processes data from Kafka to Hudi
-  - `4-transform-data.sh`: Applies transformations (JSON flattening)
-  - `5-compare-tables.sh`: Compares source and transformed data
-  - `6-schema-evolution.sh`: Demonstrates schema evolution capability
+  - `4-generate-upserts.sh`: Generates upsert events for existing records
+  - `5-process-upserts.sh`: Processes upserts with Hudi merge-on-read
+  - `6-transform-data.sh`: Applies transformations (JSON flattening)
+  - `7-compare-tables.sh`: Compares source and transformed data
+  - `8-schema-evolution.sh`: Demonstrates schema evolution capability
+  - `evolved_producer.py`: Generates and sends evolved schema data to Kafka
+  - `process_evolved_schema.py`: Processes evolved schema from Kafka to Hudi
+  - `spark-shell.sh`: Launches interactive Spark shell with MinIO access
+  - `run-demo.sh`: Master script that runs all demo steps
 - **spark/app/**: Core application code
-  - `main.py`: Kafka to Hudi ingestion logic
-  - `transform.py`: Data transformation logic
-  - `generate_kafka_data.py`: Mock CDC data generation
+  - `main.py`: Main Spark application for Kafka to Hudi ingestion
+  - `transform.py`: Transformation logic for JSON flattening
+  - `generate_kafka_data.py`: Generates sample CDC events
+  - `generate_upsert_data.py`: Generates upsert events for existing records
+  - `config.json`: Configuration for ingestion settings
+  - `transform_config.json`: Configuration for transformation settings
+- **data/**: Sample data files
+  - `mock_cdc_events.jsonl`: Sample CDC events for testing
+  - `mock_upserts.jsonl`: Sample upsert events for testing
+  - `mock_evolved_schema.jsonl`: Sample events with evolved schema
 
 ---
 
