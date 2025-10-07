@@ -1,0 +1,8 @@
+{
+  "schema": "public",
+  "table_name": "orders",
+  "kafka_topic": "orders_cdc",
+  "batch_size": "100000",
+  "criticality": "high",
+  "bucket_prefix": "s3a://hudi-data/orders/"
+}

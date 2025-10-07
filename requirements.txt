@@ -1,0 +1,5 @@
+kafka-python==2.0.2
+pyspark==3.4.1
+pandas==2.0.0
+minio==7.1.15
+pyhudi==0.14.1
